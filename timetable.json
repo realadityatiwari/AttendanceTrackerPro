@@ -1,0 +1,60 @@
+{
+  "start_date": "2026-07-15",
+  "quiz_dates": [
+    {"label": "1st Quiz", "date": "2026-08-17"},
+    {"label": "2nd Quiz", "date": "2026-09-14"},
+    {"label": "3rd Quiz", "date": "2026-10-21"}
+  ],
+  "subjects": [
+    {"code":"BNC-501", "name":"Constitution of India",          "tag":null},
+    {"code":"BCS-501", "name":"Database Management System",     "tag":null},
+    {"code":"BCS-502", "name":"Web Technology",                 "tag":null},
+    {"code":"BCS-503", "name":"Design & Analysis of Algorithm", "tag":null},
+    {"code":"BCS-054", "name":"OOS Design with C++",            "tag":"Elective-I"},
+    {"code":"BCS-058", "name":"Data Warehousing & Data Mining", "tag":"Elective-II"}
+  ],
+  "day_schedule": {
+    "0": [
+      {"s":"BCS-058", "t":"L"},
+      {"s":"BNC-501", "t":"L"},
+      {"s":"BCS-054", "t":"L"}
+    ],
+    "1": [
+      {"s":"BCS-503", "t":"L"},
+      {"s":"BCS-502", "t":"L"},
+      {"s":"BCS-501", "t":"L"},
+      {"s":"BCS-501", "t":"T"},
+      {"s":"BCS-503", "t":"T"},
+      {"s":"BCS-058", "t":"T"}
+    ],
+    "2": [
+      {"s":"BCS-054", "t":"L"},
+      {"s":"BCS-503", "t":"L"},
+      {"s":"BNC-501", "t":"L"},
+      {"s":"BCS-502", "t":"L"},
+      {"s":"BCS-058", "t":"L"},
+      {"s":"BCS-054", "t":"T"}
+    ],
+    "3": [
+      {"s":"BCS-054", "t":"L"},
+      {"s":"BCS-058", "t":"L"},
+      {"s":"BCS-501", "t":"L"},
+      {"s":"BCS-503", "t":"L"},
+      {"s":"BCS-054", "t":"T"}
+    ],
+    "4": [
+      {"s":"BCS-502", "t":"L"},
+      {"s":"BCS-501", "t":"L"},
+      {"s":"BCS-058", "t":"T"},
+      {"s":"BCS-502", "t":"T"}
+    ]
+  },
+  "time_slots": [
+    "09:00 AM - 10:00 AM",
+    "10:00 AM - 11:00 AM",
+    "11:00 AM - 12:00 PM",
+    "01:00 PM - 02:00 PM",
+    "02:00 PM - 03:00 PM",
+    "03:00 PM - 04:00 PM"
+  ]
+}

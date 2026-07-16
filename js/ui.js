@@ -1,0 +1,728 @@
+import { loadStates, clearStates } from './storage.js';
+import { getTimetable, formatTodayHeader, getLocalDateString, getTodayString, isScheduledClass, formatHistoryDate } from './utils.js';
+import { computeSubjectStats, calcForecastImpact, getAttendanceData, getSubjectStatus, pctColor, barColor, dimColor } from './attendance-engine.js';
+import {
+  dateContext, MODE, isSimulationMode, getActiveDate, getActiveDateString,
+  selectDate, selectDateByString, resetToToday,
+  getEffectiveStates, logClassState, classifyDate, deriveMode
+} from './dateContext.js';
+
+export let currentQuiz = 0;
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DATE NAVIGATOR
+   Replaces the empty dropdown. Builds the "Viewing:" label, the mode badge,
+   and the option menu (Yesterday / Today / Tomorrow / Pick Date…). All date
+   changes flow through selectDate() so mode + persistence are always correct.
+══════════════════════════════════════════════════════════════════════ */
+
+/** Renders the mode badge (LIVE MODE / SIMULATION MODE (Not Saved)). */
+export function updateModeBadge() {
+  const badge = document.getElementById('modeBadge');
+  if (!badge) return;
+  if (dateContext.mode === MODE.SIMULATION) {
+    badge.textContent = 'SIMULATION MODE · NOT SAVED';
+    badge.className = 'mode-badge mode-sim';
+    badge.style.display = 'inline-flex';
+    badge.setAttribute('role', 'status');
+    badge.setAttribute('aria-live', 'polite');
+  } else {
+    badge.textContent = 'LIVE MODE';
+    badge.className = 'mode-badge mode-live';
+    badge.style.display = 'inline-flex';
+    badge.setAttribute('role', 'status');
+    badge.setAttribute('aria-live', 'polite');
+  }
+}
+
+/** Rebuilds the "Viewing:" label + selected date summary. */
+export function updateViewingLabel() {
+  const label   = document.getElementById('viewingLabel');
+  const dateEl  = document.getElementById('viewingDate');
+  if (!dateEl) return;
+  const d = dateContext.selectedDate;
+  const dName = d.toLocaleDateString('en-US', { weekday: 'long' });
+  const dStr  = d.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+  if (label) label.textContent = `Viewing: ${dName} • ${dStr}`;
+  dateEl.textContent = `${dName} • ${dStr}`;
+  const navTrigger = document.getElementById('navTriggerLabel');
+  if (navTrigger) navTrigger.textContent = formatTodayHeader(d);
+}
+
+/**
+ * Builds the Date Navigator control (button showing current date + dropdown
+ * menu). Keeps the currently-selected option highlighted. Past/Today →
+ * LIVE in the menu; Tomorrow/Future → SIMULATION.
+ */
+export function renderDateNavigator() {
+  const nav = document.getElementById('dateNavigator');
+  if (!nav) return;
+
+  const opts = buildNavigatorOptions();
+  const menuId = 'dateNavMenu';
+
+  nav.innerHTML = `
+    <button class="nav-trigger theme-btn" id="dateNavTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="${menuId}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span id="navTriggerLabel">${formatTodayHeader(dateContext.selectedDate)}</span>
+      <svg class="nav-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+    </button>
+    <div class="nav-menu" id="${menuId}" role="menu" hidden>
+      ${opts.map(o => `
+        <button class="nav-item ${o.active ? 'active' : ''}" role="menuitem" data-nav="${o.action}" ${o.dateStr ? `data-date="${o.dateStr}"` : ''}>
+          <span class="nav-item-ico" aria-hidden="true">${o.icon}</span>
+          <span class="nav-item-label">${o.label}</span>
+          <span class="nav-item-mode ${o.modeClass}">${o.modeText}</span>
+        </button>`).join('')}
+      <div class="nav-sep"></div>
+      <div class="nav-picker">
+        <label class="nav-picker-label" for="datePickerInput">Pick Date…</label>
+        <input type="date" id="datePickerInput" class="nav-picker-input"
+               min="${getLocalDateString(getTimetable().start_date)}"
+               value="${getActiveDateString()}"
+               aria-label="Pick a date" />
+      </div>
+    </div>`;
+
+  bindNavigatorEvents();
+}
+
+function buildNavigatorOptions() {
+  const today = new Date();
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  const tomorrow  = new Date(); tomorrow.setDate(today.getDate() + 1);
+
+  const yMode = deriveMode(yesterday);
+  const tMode = deriveMode(today);
+  const tmMode = deriveMode(tomorrow);
+
+  const selStr = getActiveDateString();
+
+  return [
+    {
+      action: 'yesterday', icon: '◀', label: 'Yesterday',
+      dateStr: getLocalDateString(yesterday),
+      active: getLocalDateString(yesterday) === selStr,
+      modeText: 'Live', modeClass: 'nav-mode-live'
+    },
+    {
+      action: 'today', icon: '●', label: 'Today',
+      dateStr: getLocalDateString(today),
+      active: getLocalDateString(today) === selStr,
+      modeText: 'Live', modeClass: 'nav-mode-live'
+    },
+    {
+      action: 'tomorrow', icon: '▶', label: 'Tomorrow',
+      dateStr: getLocalDateString(tomorrow),
+      active: getLocalDateString(tomorrow) === selStr,
+      modeText: 'Sim', modeClass: 'nav-mode-sim'
+    }
+  ];
+}
+
+function bindNavigatorEvents() {
+  const trigger = document.getElementById('dateNavTrigger');
+  const menu    = document.getElementById('dateNavMenu');
+  if (!trigger || !menu) return;
+
+  const open  = () => { menu.hidden = false; trigger.setAttribute('aria-expanded', 'true'); };
+  const close = () => { menu.hidden = true;  trigger.setAttribute('aria-expanded', 'false'); };
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.hidden ? open() : close();
+  });
+
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-nav]');
+    if (!item) return;
+    const action = item.getAttribute('data-nav');
+    const dateStr = item.getAttribute('data-date');
+    if (action === 'yesterday' || action === 'today' || action === 'tomorrow') {
+      selectDateByString(dateStr);
+      close();
+      afterDateChange();
+    }
+  });
+
+  const picker = document.getElementById('datePickerInput');
+  if (picker) {
+    picker.addEventListener('change', () => {
+      if (picker.value) {
+        selectDateByString(picker.value);
+        close();
+        afterDateChange();
+      }
+    });
+  }
+
+  // Close on outside click / Escape (keyboard accessible).
+  document.addEventListener('click', () => { if (!menu.hidden) close(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu.hidden) { close(); trigger.focus(); }
+  });
+}
+
+/** Central post-change refresh used by all navigator interactions. */
+function afterDateChange() {
+  updateModeBadge();
+  updateViewingLabel();
+  recalculateAndRender();
+}
+
+export function getImpactTooltipHTML(impact) {
+  if (!impact || impact.curAvg === null) return '';
+  const diff = impact.newAvg - impact.curAvg;
+  const dir  = diff > 0.005 ? '↑' : diff < -0.005 ? '↓' : '→';
+  const eligHTML = impact.stillEligible
+    ? '<span class="tt-safe">Still Eligible</span>'
+    : '<span class="tt-unsafe">Not Eligible</span>';
+  return `
+    <div class="tt-lbl">Forecast Average</div>
+    <div><span class="tt-old">${impact.curAvg.toFixed(1)}%</span> <span class="tt-arr">${dir}</span> <span class="tt-new">${impact.newAvg.toFixed(1)}%</span></div>
+    <div>${eligHTML}</div>
+  `;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NEED-TEXT & VISUAL HELPERS
+═══════════════════════════════════════════════════════════════════════ */
+export function getRemainingRequirementText(optResult) {
+  if (optResult.infeasible) {
+    return `<div class="subj-need-text danger">⚡ Ineligible — impossible to reach 75%</div>`;
+  }
+  if (optResult.addL === 0 && optResult.addT === 0) {
+    return `<div class="subj-need-text safe">✓ Already Safe — attend any remaining</div>`;
+  }
+  const parts = [];
+  if (optResult.addL > 0) parts.push(`${optResult.addL} Lecture${optResult.addL > 1 ? 's' : ''}`);
+  if (optResult.addT > 0) parts.push(`${optResult.addT} Tutorial${optResult.addT > 1 ? 's' : ''}`);
+  return `<div class="subj-need-text warning">Need ${parts.join(' & ')} more to qualify</div>`;
+}
+
+export function getProgressRowHTML(label, pct, valStr) {
+  if (pct === null) return '';
+  const w     = Math.min(100, Math.max(0, pct)).toFixed(1);
+  const color = barColor(pct);
+  return `
+    <div class="subj-stat-row">
+      <div class="subj-stat-label">
+        <span>${label}</span>
+        <span class="val">${valStr} (${pct.toFixed(1)}%)</span>
+      </div>
+      <div class="subj-progress-track">
+        <div class="subj-progress-bar" style="width:${w}%;background-color:${color}"></div>
+      </div>
+    </div>
+  `;
+}
+
+export function makeSkipBudgetVisual(remaining, missed, type) {
+  if (type === 'T' && remaining === null) {
+    return `<span class="badge-na">—</span>`;
+  }
+  const rem = Math.max(0, remaining || 0);
+  const mis = Math.max(0, missed    || 0);
+  if (rem === 0 && mis === 0) {
+    return `<span class="badge badge-zero">0 left</span>`;
+  }
+  let squares = '';
+  for (let i = 0; i < rem; i++) {
+    squares += `<span class="budget-square filled" style="background:var(--green)"></span>`;
+  }
+  for (let i = 0; i < mis; i++) {
+    squares += `<span class="budget-square empty" style="border:1px solid var(--border2);background:var(--red-dim)"></span>`;
+  }
+  return `
+    <div style="display:inline-flex;align-items:center;gap:3px;justify-content:center;">
+      <div style="display:inline-flex;gap:2.5px;align-items:center;margin-right:5px;">${squares}</div>
+      <span class="num" style="font-size:11px;color:${rem > 0 ? 'var(--green)' : 'var(--text3)'}">${rem} left</span>
+    </div>
+  `;
+}
+
+export function makePctCell(pct, isAvg = false) {
+  if (pct === null) return `<td class="pct-cell"><span class="badge-na">—</span></td>`;
+  // Clamp display value to [0, 100] for safety
+  const display = Math.min(100, Math.max(0, pct));
+  const w   = display.toFixed(1);
+  const col = barColor(pct);
+  const fmtPct = v => v.toFixed(2);
+  const inner = `
+    <span class="pct-val" style="color:${col}">${fmtPct(display)}%</span>
+    <div class="pct-bar-wrap"><div class="pct-bar" style="width:${w}%;background:${col}"></div></div>
+  `;
+  if (isAvg) {
+    const dimCol = dimColor(pct);
+    return `<td class="pct-cell"><div class="avg-cell" style="background:${dimCol};border-radius:8px;padding:6px 10px;display:inline-block;min-width:66px">
+      <span class="pct-val" style="color:${col}">${fmtPct(display)}%</span>
+      <div class="pct-bar-wrap"><div class="pct-bar" style="width:${w}%;background:${col}"></div></div>
+    </div></td>`;
+  }
+  return `<td class="pct-cell">${inner}</td>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RENDER PANEL — refactored into sub-functions (each ≤ 50 lines)
+═══════════════════════════════════════════════════════════════════════ */
+
+/** Build the hero card HTML from aggregated row data. */
+
+export function buildHeroCard(rows, label, quizDate) {
+  const totalClasses         = rows.reduce((s, r) => s + r.totComb, 0);
+  const totalSubj            = rows.length;
+  const totalMustAtt         = rows.reduce((s, r) => s + r.optResult.addL + r.optResult.addT, 0);
+  const totalSkips           = rows.reduce((s, r) => s + r.optResult.skipL_budget + r.optResult.skipT_budget, 0);
+  const forecastVals         = rows.map(r => r.forecastAvgPct).filter(v => v !== null);
+  const overallForecastAvg   = forecastVals.length > 0
+    ? forecastVals.reduce((a, b) => a + b, 0) / forecastVals.length
+    : null;
+  const overallStatus        = getSubjectStatus(overallForecastAvg);
+  const dateStr              = quizDate.toLocaleDateString('en-US', {day:'numeric', month:'short', year:'numeric'});
+  const valColor             = overallForecastAvg !== null ? pctColor(overallForecastAvg) : 'var(--text3)';
+  const valDisplay           = overallForecastAvg !== null ? overallForecastAvg.toFixed(1) + '%' : '—';
+
+  return `
+    <div class="hero-card">
+      <div class="hero-left">
+        <div class="hero-label">Dashboard Summary</div>
+        <div class="hero-title">${label} · ${dateStr}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:24px;">
+        <div style="text-align:right;">
+          <div class="hero-val" style="color:${valColor}">${valDisplay}</div>
+          <div class="hero-label" style="margin-top:2px;">Avg Forecast</div>
+        </div>
+        <span class="status-badge ${overallStatus.cls}" style="font-size:13px;padding:5px 14px;">${overallStatus.text}</span>
+      </div>
+      <div class="hero-right">
+        <div class="hero-item">
+          <div class="hero-item-label">Must Attend</div>
+          <div class="hero-item-val" style="color:var(--accent)">${totalMustAtt}</div>
+          <div class="hero-item-sub">remaining classes</div>
+        </div>
+        <div class="hero-item">
+          <div class="hero-item-label">Safe Skips Left</div>
+          <div class="hero-item-val" style="color:var(--green)">${totalSkips}</div>
+          <div class="hero-item-sub">maximum skips</div>
+        </div>
+        <div class="hero-item">
+          <div class="hero-item-label">Total Classes</div>
+          <div class="hero-item-val">${totalClasses}</div>
+          <div class="hero-item-sub">across ${totalSubj} subjects</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Build one subject card HTML from computed stats. */
+export function buildSubjectCard(r) {
+  const currentLecRow = r.completedL > 0
+    ? getProgressRowHTML('Lecture', r.currentLecPct, `${r.attL_done} / ${r.completedL}`)
+    : `<div class="subj-stat-row"><div class="subj-stat-label"><span>Lecture</span><span class="val">—</span></div></div>`;
+
+  const currentTutRow = r.totT > 0
+    ? (r.completedT > 0
+        ? getProgressRowHTML('Tutorial', r.currentTutPct, `${r.attT_done} / ${r.completedT}`)
+        : `<div class="subj-stat-row"><div class="subj-stat-label"><span>Tutorial</span><span class="val">—</span></div></div>`)
+    : '';
+
+  const currentAvgRow  = r.currentAvgPct !== null
+    ? getProgressRowHTML('Average', r.currentAvgPct, `${r.currentAvgPct.toFixed(1)}%`)
+    : '';
+
+  // forecastLecStr: attended so far + if all pending are attended
+  const forecastLecStr = `${r.attL_done + r.pendingL} / ${r.totL}`;
+  const forecastTutStr = r.totT > 0 ? `${r.attT_done + r.pendingT} / ${r.totT}` : '';
+
+  const forecastLecRow = getProgressRowHTML('Lecture',          r.forecastLecPct, forecastLecStr);
+  const forecastTutRow = r.totT > 0 ? getProgressRowHTML('Tutorial', r.forecastTutPct, forecastTutStr) : '';
+  const forecastAvgRow = getProgressRowHTML('Forecast Average', r.forecastAvgPct,
+    r.forecastAvgPct !== null ? `${r.forecastAvgPct.toFixed(1)}%` : '—');
+
+  return `
+    <div class="subj-card">
+      <div class="subj-card-header">
+        <span class="subj-card-code">${r.code}</span>
+        <span class="status-badge ${r.status.cls}">${r.status.text}</span>
+      </div>
+      <div class="subj-card-name">${r.name}</div>
+      <div class="subj-card-stats">
+        <div class="subj-stat-section">
+          <div class="subj-stat-section-label">Current</div>
+          ${currentLecRow}${currentTutRow}${currentAvgRow}
+        </div>
+        <div class="subj-stat-section">
+          <div class="subj-stat-section-label">Forecast (if all pending attended)</div>
+          ${forecastLecRow}${forecastTutRow}${forecastAvgRow}
+        </div>
+      </div>
+      ${getRemainingRequirementText(r.optResult)}
+    </div>`;
+}
+
+/** Build the summary stats row (4 cards at top of panel). */
+export function buildStatsRow(rows) {
+  const totalClasses = rows.reduce((s, r) => s + r.totComb, 0);
+  const totalSubj    = rows.length;
+  const totalMustAtt = rows.reduce((s, r) => s + r.optResult.addL + r.optResult.addT, 0);
+  const totalSkips   = rows.reduce((s, r) => s + r.optResult.skipL_budget + r.optResult.skipT_budget, 0);
+
+  return `
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Total Classes</div>
+        <div class="stat-val">${totalClasses}</div>
+        <div class="stat-sub">across ${totalSubj} subjects</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Must Attend Rem.</div>
+        <div class="stat-val" style="color:var(--accent)">${totalMustAtt}</div>
+        <div class="stat-sub">additional classes needed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Safe Skips Rem.</div>
+        <div class="stat-val" style="color:var(--green)">${totalSkips}</div>
+        <div class="stat-sub">maximum remaining skips</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Target</div>
+        <div class="stat-val" style="color:var(--amber)">75%</div>
+        <div class="stat-sub">average (L% + T%) / 2</div>
+      </div>
+    </div>`;
+}
+
+/** Build one table row HTML from computed stats. */
+export function buildTableRow(r) {
+  const opt      = r.optResult;
+  const tutBadge = r.totT === 0
+    ? `<td><span class="badge-na">N/A</span></td>`
+    : `<td><span class="badge badge-must">${opt.addT}</span></td>`;
+  const tutSkip  = r.totT === 0
+    ? `<td><span class="badge-na">—</span></td>`
+    : `<td>${makeSkipBudgetVisual(opt.skipT_budget, r.missT_done, 'T')}</td>`;
+  const tagHTML  = r.tag ? `<div><span class="s-elec">${r.tag}</span></div>` : '';
+
+  const currentTutCell  = r.totT > 0 ? makePctCell(r.currentTutPct)  : `<td><span class="badge-na">N/A</span></td>`;
+  const forecastTutCell = r.totT > 0 ? makePctCell(r.forecastTutPct) : `<td><span class="badge-na">N/A</span></td>`;
+
+  return `<tr>
+    <td class="left">
+      <div class="s-code">${r.code}</div>
+      <div class="s-name">${r.name}</div>
+      ${tagHTML}
+    </td>
+    <td><span class="num">${r.totL}</span></td>
+    <td>${r.totT > 0 ? `<span class="num">${r.totT}</span>` : `<span class="badge-na">—</span>`}</td>
+    <td><span class="num-combined">${r.totComb}</span></td>
+    <th class="sep-col"></th>
+    <td><span class="badge badge-must">${opt.addL}</span></td>
+    ${tutBadge}
+    <td><span class="num-muted">${opt.addL + opt.addT}</span></td>
+    <th class="sep-col"></th>
+    ${makePctCell(r.currentLecPct)}
+    ${currentTutCell}
+    ${makePctCell(r.currentAvgPct, true)}
+    <th class="sep-col"></th>
+    ${makePctCell(r.forecastLecPct)}
+    ${forecastTutCell}
+    ${makePctCell(r.forecastAvgPct, true)}
+    <th class="sep-col"></th>
+    <td>${makeSkipBudgetVisual(opt.skipL_budget, r.missL_done, 'L')}</td>
+    ${tutSkip}
+    <td><span class="num-muted">${opt.skipL_budget + opt.skipT_budget}</span></td>
+  </tr>`;
+}
+
+/** Main render orchestrator — assembles all sub-sections. */
+export function renderPanel(quizIdx, liveData = getAttendanceData(getTimetable().quiz_dates[quizIdx].date)) {
+  const {label, date: quizDate} = getTimetable().quiz_dates[quizIdx];
+
+  // Compute all stats in ONE pass (single source of truth)
+  const rows = getTimetable().subjects.map(({code, name, tag}) =>
+    computeSubjectStats(code, name, tag, liveData[code])
+  );
+
+  const heroHTML  = buildHeroCard(rows, label, quizDate);
+  const cardsHTML = rows.map(buildSubjectCard).join('');
+  const statsHTML = buildStatsRow(rows);
+  const rowsHTML  = rows.map(buildTableRow).join('');
+
+  return `
+    ${heroHTML}
+    <div class="subject-grid">${cardsHTML}</div>
+    ${statsHTML}
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="att" role="table" aria-label="${label} attendance requirements">
+          <thead>
+            <tr class="grp-row">
+              <th class="left" rowspan="2" style="min-width:180px;padding:10px 12px">Subject</th>
+              <th colspan="3" class="grp-total">Total Classes</th>
+              <th class="sep-col" rowspan="2"></th>
+              <th colspan="3" class="grp-must">Must Attend (Remaining)</th>
+              <th class="sep-col" rowspan="2"></th>
+              <th colspan="3" class="grp-must">Current %</th>
+              <th class="sep-col" rowspan="2"></th>
+              <th colspan="3" class="grp-must">Forecast %</th>
+              <th class="sep-col" rowspan="2"></th>
+              <th colspan="3" class="grp-skip">Can Skip (Remaining Safe Skips)</th>
+            </tr>
+            <tr class="sub-row">
+              <th>Lectures</th><th>Tutorials</th><th>Combined</th>
+              <th class="sub-must">Must L</th><th class="sub-must">Must T</th><th class="sub-must">Min total</th>
+              <th class="sub-must">Lec %</th><th class="sub-must">Tut %</th><th class="sub-must">Avg %</th>
+              <th class="sub-must">Lec %</th><th class="sub-must">Tut %</th><th class="sub-must">Avg %</th>
+              <th class="sub-skip">Skip L</th><th class="sub-skip">Skip T</th><th class="sub-skip">Total skip</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHTML}</tbody>
+        </table>
+      </div>
+      <div class="legend">
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent)"></span> Must Attend (blue badge)</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span> Can Skip / Safe Skips (green badge)</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--text3)"></span> Zero / Not Applicable</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span> Below 75% threshold</span>
+      </div>
+    </div>
+    <div class="opt-note">
+      <span class="opt-note-icon">⚡</span>
+      <div>
+        <b>Optimisation note:</b> The "Must Attend" values are found by exhaustive search over all valid
+        integer combinations of (attended lectures, attended tutorials), minimising total classes attended
+        while satisfying <b>(Lec% + Tut%) / 2 ≥ 75%</b>. On ties, the combination with the
+        <b>fewest lectures attended</b> (maximum lecture skips) is chosen — this is why subjects with
+        tutorials show 50% lecture attendance paired with 100% tutorial attendance as the optimal minimum.
+        <br><br>
+        <b>Forecast %</b> assumes all remaining (pending) classes are attended. <b>Current %</b> is based only on
+        completed (attended or missed) classes and excludes all pending classes.
+      </div>
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LOGGING INTERFACE
+═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Log or update attendance for one class.
+ * Blocks future-date logging unless simulation mode is active.
+ */
+export function logAttendance(dateStr, subjectCode, type, newState) {
+  if (!isScheduledClass(dateStr, subjectCode, type) || !['Attended', 'Missed', 'Pending'].includes(newState)) {
+    console.warn('[logAttendance] Blocked invalid class or state.');
+    return;
+  }
+
+  // All writes flow through the date context so persistence vs. temporary
+  // memory (simulation) is decided in exactly one place.
+  const ok = logClassState(dateStr, subjectCode, type, newState);
+  if (!ok) {
+    console.warn('[logAttendance] Write rejected by date context.');
+    return;
+  }
+  recalculateAndRender();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TODAY'S CLASSES RENDERER
+═══════════════════════════════════════════════════════════════════════ */
+export function renderTodayClasses(targetDate, quizLiveData) {
+  const listContainer = document.getElementById('todayClassList');
+  const dateLabel     = document.getElementById('todayDateLabel');
+  if (!listContainer || !dateLabel) return;
+
+  dateLabel.innerHTML = formatTodayHeader(targetDate);
+
+  const dow         = targetDate.getDay();
+  const monIdx      = (dow + 6) % 7; // Mon=0 … Sun=6
+  const dateStr     = getLocalDateString(targetDate);
+  const isWeekend   = dow === 0 || dow === 6;
+  const targetNoon  = new Date(targetDate);
+  targetNoon.setHours(12, 0, 0, 0);
+  const semStart = getTimetable().start_date;
+  const semEnd   = getTimetable().quiz_dates[getTimetable().quiz_dates.length - 1].date;
+  const isWithinSemester = targetNoon >= semStart && targetNoon <= semEnd;
+
+  if (isWeekend || !isWithinSemester || !getTimetable().day_schedule[monIdx]) {
+    listContainer.innerHTML = `<div class="today-empty">No scheduled classes on this date.</div>`;
+    return;
+  }
+
+  const classes      = getTimetable().day_schedule[monIdx];
+  const states       = getEffectiveStates();
+  const isFuture     = dateStr > getTodayString();
+  const isBlocked    = isFuture && !isSimulationMode();
+
+  // Get live attendance data for the currently selected quiz (for tooltips)
+  listContainer.innerHTML = classes.map((c, idx) => {
+    const subj       = getTimetable().subjects.find(s => s.code === c.s);
+    const subjName   = subj ? subj.name : c.s;
+    const classId    = `${dateStr}:${c.s}:${c.t}`;
+    const currState  = states[classId] || 'Pending';
+    const timeSlot   = getTimetable().time_slots[idx] || 'TBD';
+    const typeLabel  = c.t === 'L' ? 'Lecture' : 'Tutorial';
+
+    const attActive  = currState === 'Attended' ? 'active-attended' : '';
+    const missActive = currState === 'Missed'   ? 'active-missed'   : '';
+    const pendActive = currState === 'Pending'  ? 'active-pending'  : '';
+
+    // Build tooltips showing forecast impact of each possible action
+    const impactAtt  = quizLiveData
+      ? getImpactTooltipHTML(calcForecastImpact(quizLiveData, c.s, c.t, currState, 'Attended'))
+      : '';
+    const impactMiss = quizLiveData
+      ? getImpactTooltipHTML(calcForecastImpact(quizLiveData, c.s, c.t, currState, 'Missed'))
+      : '';
+
+    const attTooltip  = impactAtt  || 'Mark as attended';
+    const missTooltip = impactMiss || 'Mark as missed';
+
+    // Disabled state for future dates in normal mode
+    const disabledAttr = isBlocked ? 'disabled title="Enable Simulation Mode to log future dates"' : '';
+    const disabledStyle = isBlocked ? 'opacity:0.4;cursor:not-allowed;' : '';
+
+    return `
+      <div class="today-row">
+        <div class="today-row-left">
+          <div class="today-row-subj">
+            <span class="s-code">${c.s}</span>
+            <span class="today-row-type">${typeLabel}</span>
+            <span class="today-row-time">${timeSlot}</span>
+          </div>
+          <div class="today-row-name">${subjName}</div>
+        </div>
+        <div class="today-row-actions">
+          <div class="tooltip-wrap">
+            <button class="action-btn ${attActive}" style="${disabledStyle}"
+              ${disabledAttr}
+              aria-label="Mark ${c.s} ${typeLabel} as attended"
+              data-action="logAttendance" data-date="${dateStr}" data-s="${c.s}" data-t="${c.t}" data-state="Attended">✓ Attended</button>
+            <span class="tooltip-text">${attTooltip}</span>
+          </div>
+          <div class="tooltip-wrap">
+            <button class="action-btn ${missActive}" style="${disabledStyle}"
+              ${disabledAttr}
+              aria-label="Mark ${c.s} ${typeLabel} as missed"
+              data-action="logAttendance" data-date="${dateStr}" data-s="${c.s}" data-t="${c.t}" data-state="Missed">✕ Missed</button>
+            <span class="tooltip-text">${missTooltip}</span>
+          </div>
+          <button class="action-btn ${pendActive}"
+            ${disabledAttr} style="${disabledStyle}" aria-label="Reset ${c.s} ${typeLabel} attendance status"
+            data-action="logAttendance" data-date="${dateStr}" data-s="${c.s}" data-t="${c.t}" data-state="Pending">Reset</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HISTORY LOG RENDERER
+═══════════════════════════════════════════════════════════════════════ */
+export function renderHistoryLog() {
+  const historyList  = document.getElementById('historyList');
+  const historyCount = document.getElementById('historyCount');
+  if (!historyList || !historyCount) return;
+
+  const states = loadStates();
+  const items  = [];
+
+  Object.entries(states).forEach(([classId, state]) => {
+    if (state !== 'Attended' && state !== 'Missed') return; // skip invalid/pending
+    const parts = classId.split(':');
+    if (parts.length !== 3) return; // guard against corrupt keys
+    const [dateStr, sCode, type] = parts;
+    if (!isScheduledClass(dateStr, sCode, type)) return;
+    items.push({classId, dateStr, sCode, type, state});
+  });
+
+  // Sort newest first (lexicographic YYYY-MM-DD is correct)
+  items.sort((a, b) => b.dateStr.localeCompare(a.dateStr) || a.classId.localeCompare(b.classId));
+
+  historyCount.textContent = items.length;
+
+  if (items.length === 0) {
+    historyList.innerHTML = `<div class="today-empty">No logged attendance history yet.</div>`;
+    return;
+  }
+
+  historyList.innerHTML = items.map(item => {
+    const subj        = getTimetable().subjects.find(s => s.code === item.sCode);
+    const subjName    = subj ? subj.name : item.sCode;
+    const dateFmt     = formatHistoryDate(item.dateStr);
+    const isAttended  = item.state === 'Attended';
+    const badgeClass  = isAttended ? 'badge-skip' : 'badge-zero';
+    const symbol      = isAttended ? '✓' : '✕';
+    const typeLabel   = item.type === 'L' ? 'Lecture' : 'Tutorial';
+
+    return `
+      <div class="history-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);font-size:12.5px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="badge ${badgeClass}" style="min-width:24px;height:24px;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;">${symbol}</span>
+          <div>
+            <span style="font-weight:600;color:var(--text);">${dateFmt}</span>
+            <span style="color:var(--text3);margin:0 6px;">•</span>
+            <span style="color:var(--text2);"><strong style="font-family:'JetBrains Mono',monospace;color:var(--text);">${item.sCode}</strong> ${typeLabel}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="color:var(--text3);font-size:11px;">${subjName}</span>
+          <button class="theme-btn" style="padding:2px 6px;font-size:10px;"
+            data-action="logAttendance" data-date="${item.dateStr}" data-s="${item.sCode}" data-t="${item.type}" data-state="Pending">Reset</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RECALCULATE & RENDER — master refresh
+═══════════════════════════════════════════════════════════════════════ */
+export function recalculateAndRender() {
+  const targetDate  = getActiveDate();
+  const liveData    = getAttendanceData(getTimetable().quiz_dates[currentQuiz].date, getEffectiveStates());
+  renderTodayClasses(targetDate, liveData);
+  renderHistoryLog();
+  updateModeBadge();
+  updateViewingLabel();
+  document.getElementById('panels').innerHTML = renderPanel(currentQuiz, liveData);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TAB SWITCHING
+═══════════════════════════════════════════════════════════════════════ */
+
+export function switchQuiz(idx, btn) {
+  if (idx === currentQuiz) return;
+  currentQuiz = idx;
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', i === idx);
+    b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+  });
+  recalculateAndRender();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THEME TOGGLE
+═══════════════════════════════════════════════════════════════════════ */
+const MOON_PATH = "M21 12.79A9 9 0 1 1 11.21 3a7 7 0 1 0 9.79 9.79z";
+const SUN_PATH  = "M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 5a7 7 0 1 0 0 14A7 7 0 0 0 12 5z";
+
+export function updateThemeBtn(theme) {
+  const iconPath = document.getElementById('themeIconPath');
+  const label    = document.getElementById('themeLabel');
+  if (!iconPath || !label) return;
+  if (theme === 'dark') {
+    iconPath.setAttribute('d', MOON_PATH);
+    label.textContent = 'Dark';
+  } else {
+    iconPath.setAttribute('d', SUN_PATH);
+    label.textContent = 'Light';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BUILT-IN TEST SUITE
+   Run automatically on load. All results printed to console.
+   No external dependencies required.
+═══════════════════════════════════════════════════════════════════════ */
