@@ -1,7 +1,7 @@
 import { initTimetable } from './utils.js';
 import { auth } from './firebase.js';
-import { AppState, fetchCloudStates, getLocalAttendance, clearLocalAttendance, triggerCloudSync } from './storage.js';
-import { recalculateAndRender, updateThemeBtn, renderDateNavigator, renderBottomSheetDateNav } from './ui.js';
+import { AppState, fetchCloudStates, getLocalAttendance, clearLocalAttendance, triggerCloudSync, initLocalState } from './storage.js';
+import { recalculateAndRender, updateThemeBtn, renderDateNavigator, renderBottomSheetDateNav, updateProfileUI } from './ui.js';
 import { selectDate } from './dateContext.js';
 import { loginUser, signupUser, logoutUser } from './auth.js';
 import { validateSignupForm, validateRollNumber, validatePassword } from './validation.js';
@@ -160,49 +160,37 @@ async function bootstrap() {
     console.log("[app.js] Auth state changed, user:", user ? user.uid : "null");
     if (user) {
       document.getElementById('authContainer').style.display = 'none';
+      // 1. Local-first hydration
+      initLocalState(user.uid);
+      console.log("[app.js] Local state loaded");
+
+      // 2. Initial Render
+      applyTheme(AppState.settings.theme || 'dark');
+      document.getElementById('appDashboard').style.display = 'block';
+      updateProfileUI();
+      renderDateNavigator();
+      
+      document.body.classList.add('view-dashboard');
+      document.querySelectorAll('.view-section').forEach(section => {
+        section.style.display = section.id === 'dashboardView' ? 'block' : 'none';
+      });
+      recalculateAndRender();
+      
+      // 3. Cloud Sync (Background)
       try {
-        await fetchCloudStates();
+        const stateChanged = await fetchCloudStates();
         console.log("[app.js] Cloud states fetched");
+        if (stateChanged) {
+          applyTheme(AppState.settings.theme || 'dark');
+          updateProfileUI();
+          recalculateAndRender();
+          console.log("[app.js] UI updated with merged cloud data");
+        }
       } catch (e) {
         console.error("[app.js] fetchCloudStates failed:", e);
       }
 
-      // Apply theme before showing dashboard to avoid flash
-      applyTheme(AppState.settings.theme || 'dark');
-      // Force sync to ensure default theme is written to Firestore if it didn't exist
-      triggerCloudSync();
 
-      document.getElementById('appDashboard').style.display = 'block';
-      try {
-        updateProfileUI();
-        console.log("[app.js] updateProfileUI done");
-      } catch (e) {
-        console.error("[app.js] updateProfileUI failed:", e);
-      }
-      try {
-        console.log("[app.js] calling renderDateNavigator");
-        renderDateNavigator();
-        console.log("[app.js] renderDateNavigator done");
-      } catch (e) {
-        console.error("[app.js] renderDateNavigator failed:", e.message, e.stack);
-      }
-      try {
-        // Set initial view state
-        document.body.classList.add('view-dashboard');
-        document.querySelectorAll('.view-section').forEach(section => {
-          section.style.display = section.id === 'dashboardView' ? 'block' : 'none';
-        });
-        console.log("[app.js] Initial view set to dashboard");
-      } catch (e) {
-        console.error("[app.js] Initial view setup failed:", e);
-      }
-      try {
-        console.log("[app.js] calling recalculateAndRender");
-        recalculateAndRender();
-        console.log("[app.js] recalculateAndRender done");
-      } catch (e) {
-        console.error("[app.js] recalculateAndRender failed:", e.message, e.stack);
-      }
       try {
         checkMigration();
       } catch (e) {

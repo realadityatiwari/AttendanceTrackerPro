@@ -7,10 +7,47 @@ export const AppState = {
   settings: {
     theme: 'dark',
     simulationMode: false
-  }
+  },
+  isDirty: false
 };
 
 let cloudSyncTimeout = null;
+
+// ====================================================
+// LOCAL PERSISTENCE
+// ====================================================
+
+export function initLocalState(uid) {
+  try {
+    const raw = localStorage.getItem(`app_state_${uid}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        if (parsed.attendance && typeof parsed.attendance === 'object' && !Array.isArray(parsed.attendance)) {
+          AppState.attendance = parsed.attendance;
+        }
+        if (parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) {
+          AppState.settings = { ...AppState.settings, ...parsed.settings };
+        }
+        if (parsed.profile && typeof parsed.profile === 'object' && !Array.isArray(parsed.profile)) {
+          AppState.profile = { ...AppState.profile, ...parsed.profile };
+        }
+        console.log("[storage.js] Local state hydrated successfully.");
+      }
+    }
+  } catch (e) {
+    console.error("[storage.js] Failed to parse local state. Using defaults.", e);
+  }
+}
+
+export function persistLocalState(uid) {
+  if (!uid) return;
+  try {
+    localStorage.setItem(`app_state_${uid}`, JSON.stringify(AppState));
+  } catch (e) {
+    console.error("[storage.js] Failed to persist local state:", e);
+  }
+}
 
 export function loadStates() {
   return AppState.attendance;
@@ -18,45 +55,112 @@ export function loadStates() {
 
 export function saveStates(states) {
   AppState.attendance = states;
-  triggerCloudSync();
+  AppState.isDirty = true;
+  
+  if (auth.currentUser) {
+    persistLocalState(auth.currentUser.uid);
+    triggerCloudSync();
+  }
 }
 
 export function clearStates() {
   AppState.attendance = {};
-  triggerCloudSync();
+  AppState.isDirty = true;
+  
+  if (auth.currentUser) {
+    persistLocalState(auth.currentUser.uid);
+    triggerCloudSync(true); // explicitly pass isResetting = true
+  }
 }
 
-export function triggerCloudSync() {
-  if (!auth.currentUser) return;
-  
-  if (cloudSyncTimeout) clearTimeout(cloudSyncTimeout);
-  
-  cloudSyncTimeout = setTimeout(() => {
-    const uid = auth.currentUser.uid;
-    db.collection('students').doc(uid).set({
-      attendance: AppState.attendance,
-      settings: AppState.settings,
-      profile: AppState.profile
-    }, { merge: true })
-    .catch(err => console.error("Cloud sync failed", err));
-  }, 1000);
+// ====================================================
+// CLOUD SYNCHRONIZATION
+// ====================================================
+
+function isPlainObject(val) {
+  return val !== null && typeof val === 'object' && !Array.isArray(val);
 }
 
 export async function fetchCloudStates() {
-  if (!auth.currentUser) return;
+  if (!auth.currentUser) return false;
   const uid = auth.currentUser.uid;
+  let stateChanged = false;
+
   try {
     const doc = await db.collection('students').doc(uid).get();
     if (doc.exists) {
       const data = doc.data();
-      if (data.attendance) AppState.attendance = data.attendance;
-      if (data.settings) AppState.settings = { ...AppState.settings, ...data.settings };
-      if (data.profile) AppState.profile = { ...AppState.profile, ...data.profile };
+      
+      // Safe merge: Attendance
+      if (isPlainObject(data.attendance)) {
+        AppState.attendance = { ...AppState.attendance, ...data.attendance };
+        stateChanged = true;
+      }
+      
+      // Safe merge: Settings
+      if (isPlainObject(data.settings)) {
+        AppState.settings = { ...AppState.settings, ...data.settings };
+        stateChanged = true;
+      }
+      
+      // Safe merge: Profile
+      if (isPlainObject(data.profile)) {
+        AppState.profile = { ...AppState.profile, ...data.profile };
+        stateChanged = true;
+      }
+      
+      if (stateChanged) {
+        persistLocalState(uid);
+      }
+      
+      return stateChanged;
+    } else {
+      // Cloud document doesn't exist. Let's upload local state if it's not empty.
+      if (Object.keys(AppState.attendance).length > 0) {
+        AppState.isDirty = true;
+        triggerCloudSync();
+      }
+      return false;
     }
   } catch (err) {
-    console.error("Failed to fetch cloud states", err);
+    console.error("[storage.js] Failed to fetch cloud states:", err);
+    return false;
   }
 }
+
+export function triggerCloudSync(isResetting = false) {
+  if (!auth.currentUser) return;
+  const uid = auth.currentUser.uid;
+  
+  // Defensive guard: Do not upload completely empty attendance unless it's a reset
+  if (!isResetting && Object.keys(AppState.attendance).length === 0) {
+    // If the user hasn't marked anything and it's not a reset, do not upload `{}` 
+    // This prevents accidental clearing of the cloud document if local state is blank.
+    return;
+  }
+  
+  if (cloudSyncTimeout) clearTimeout(cloudSyncTimeout);
+  
+  cloudSyncTimeout = setTimeout(async () => {
+    try {
+      await db.collection('students').doc(uid).set({
+        attendance: AppState.attendance,
+        settings: AppState.settings,
+        profile: AppState.profile
+      }, { merge: true });
+      
+      AppState.isDirty = false;
+      persistLocalState(uid);
+      console.log("[storage.js] Cloud sync complete.");
+    } catch (err) {
+      console.error("[storage.js] Cloud sync failed", err);
+    }
+  }, 1000);
+}
+
+// ====================================================
+// LEGACY MIGRATION (V1 -> V2)
+// ====================================================
 
 export function getLocalAttendance() {
   try {
