@@ -734,6 +734,9 @@ export function renderTodayClasses(targetDate, quizLiveData) {
     const attActive  = currState === 'Attended' ? 'active-attended' : '';
     const missActive = currState === 'Missed'   ? 'active-missed'   : '';
     const pendActive = currState === 'Pending'  ? 'active-pending'  : '';
+    
+    const attPressed = currState === 'Attended' ? 'true' : 'false';
+    const missPressed = currState === 'Missed' ? 'true' : 'false';
 
     // Build tooltips showing forecast impact of each possible action
     const impactAtt  = quizLiveData
@@ -749,6 +752,9 @@ export function renderTodayClasses(targetDate, quizLiveData) {
     // Disabled state for future dates in normal mode
     const disabledAttr = isBlocked ? 'disabled title="Enable Simulation Mode to log future dates"' : '';
     const disabledStyle = isBlocked ? 'opacity:0.4;cursor:not-allowed;' : '';
+    
+    const tooltipIdAtt = `tt-${dateStr}-${c.s}-${c.t}-att`.replace(/:/g, '-');
+    const tooltipIdMiss = `tt-${dateStr}-${c.s}-${c.t}-miss`.replace(/:/g, '-');
 
     return `
       <div class="today-row">
@@ -764,16 +770,20 @@ export function renderTodayClasses(targetDate, quizLiveData) {
           <div class="tooltip-wrap">
             <button class="action-btn ${attActive}" style="${disabledStyle}"
               ${disabledAttr}
+              aria-pressed="${attPressed}"
+              aria-describedby="${tooltipIdAtt}"
               aria-label="Mark ${c.s} ${typeLabel} as attended"
               data-action="logAttendance" data-date="${dateStr}" data-s="${c.s}" data-t="${c.t}" data-state="Attended">✓ Attended</button>
-            <span class="tooltip-text">${attTooltip}</span>
+            <span id="${tooltipIdAtt}" role="tooltip" class="tooltip-text">${attTooltip}</span>
           </div>
           <div class="tooltip-wrap">
             <button class="action-btn ${missActive}" style="${disabledStyle}"
               ${disabledAttr}
+              aria-pressed="${missPressed}"
+              aria-describedby="${tooltipIdMiss}"
               aria-label="Mark ${c.s} ${typeLabel} as missed"
               data-action="logAttendance" data-date="${dateStr}" data-s="${c.s}" data-t="${c.t}" data-state="Missed">✕ Missed</button>
-            <span class="tooltip-text">${missTooltip}</span>
+            <span id="${tooltipIdMiss}" role="tooltip" class="tooltip-text">${missTooltip}</span>
           </div>
           <button class="action-btn ${pendActive}"
             ${disabledAttr} style="${disabledStyle}" aria-label="Reset ${c.s} ${typeLabel} attendance status"
@@ -835,6 +845,7 @@ export function renderHistoryLog() {
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="color:var(--text3);font-size:11px;">${subjName}</span>
           <button class="theme-btn" style="padding:2px 6px;font-size:10px;"
+            aria-label="Reset ${item.sCode} ${typeLabel} on ${dateFmt}"
             data-action="logAttendance" data-date="${item.dateStr}" data-s="${item.sCode}" data-t="${item.type}" data-state="Pending">Reset</button>
         </div>
       </div>`;

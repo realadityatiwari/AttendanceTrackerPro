@@ -1,6 +1,6 @@
 import { initTimetable } from './utils.js';
 import { auth } from './firebase.js';
-import { AppState, fetchCloudStates, getLocalAttendance, clearLocalAttendance } from './storage.js';
+import { AppState, fetchCloudStates, getLocalAttendance, clearLocalAttendance, triggerCloudSync } from './storage.js';
 import { recalculateAndRender, updateThemeBtn, renderDateNavigator, renderBottomSheetDateNav } from './ui.js';
 import { selectDate } from './dateContext.js';
 import { loginUser, signupUser, logoutUser } from './auth.js';
@@ -158,13 +158,19 @@ async function bootstrap() {
     console.log("[app.js] Auth state changed, user:", user ? user.uid : "null");
     if (user) {
       document.getElementById('authContainer').style.display = 'none';
-      document.getElementById('appDashboard').style.display = 'block';
       try {
         await fetchCloudStates();
         console.log("[app.js] Cloud states fetched");
       } catch (e) {
         console.error("[app.js] fetchCloudStates failed:", e);
       }
+
+      // Apply theme before showing dashboard to avoid flash
+      applyTheme(AppState.settings.theme || 'dark');
+      // Force sync to ensure default theme is written to Firestore if it didn't exist
+      triggerCloudSync();
+
+      document.getElementById('appDashboard').style.display = 'block';
       try {
         updateProfileUI();
         console.log("[app.js] updateProfileUI done");
@@ -265,13 +271,23 @@ function handleFabClick() {
 }
 
 /* ─── Profile Theme Toggle ────────────────────────────────────────── */
-function toggleProfileTheme() {
+function applyTheme(theme) {
   const html = document.documentElement;
-  const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   html.setAttribute('data-theme', theme);
   UI.updateThemeBtn(theme);
   const label = document.getElementById('profileThemeLabel');
   if (label) label.textContent = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
+  
+  if (AppState.settings.theme !== theme) {
+    AppState.settings.theme = theme;
+    triggerCloudSync();
+  }
+}
+
+function toggleProfileTheme() {
+  const html = document.documentElement;
+  const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(theme);
 }
 
 function initDOMBindings() {
@@ -298,11 +314,7 @@ function initDOMBindings() {
     console.log("[app.js] themeToggle clicked");
     const html = document.documentElement;
     const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-theme', theme);
-    UI.updateThemeBtn(theme);
-    // Sync profile theme label
-    const label = document.getElementById('profileThemeLabel');
-    if (label) label.textContent = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
+    applyTheme(theme);
   });
 
   bindClick('resetBtn', () => {

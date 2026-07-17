@@ -2003,7 +2003,8 @@ table.att td.left { text-align: left; }
   line-height: 1.6;
   text-align: center;
 }
-.tooltip-wrap:hover .tooltip-text {
+.tooltip-wrap:hover .tooltip-text,
+.tooltip-wrap:focus-within .tooltip-text {
   visibility: visible;
   opacity: 1;
 }

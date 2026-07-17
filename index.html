@@ -30,11 +30,11 @@
     
     <div id="loginView">
       <div style="margin-bottom:20px;">
-        <label class="stat-label">Roll Number</label>
+        <label class="stat-label" for="loginRoll">Roll Number</label>
         <input type="text" id="loginRoll" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;" placeholder="13 digit roll number" maxlength="13">
       </div>
       <div style="margin-bottom:28px;">
-        <label class="stat-label">Password</label>
+        <label class="stat-label" for="loginPass">Password</label>
         <input type="password" id="loginPass" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;" placeholder="Min 8 characters">
       </div>
       <button class="tab-btn active" style="width:100%; justify-content:center; padding:14px; font-size: 14px; border:none;" id="btnLogin">Login securely</button>
@@ -45,19 +45,19 @@
 
     <div id="signupView" style="display:none;">
       <div style="margin-bottom:16px;">
-        <label class="stat-label">Full Name</label>
+        <label class="stat-label" for="signupName">Full Name</label>
         <input type="text" id="signupName" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;" placeholder="John Doe">
       </div>
       <div style="margin-bottom:16px;">
-        <label class="stat-label">Roll Number</label>
+        <label class="stat-label" for="signupRoll">Roll Number</label>
         <input type="text" id="signupRoll" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;" placeholder="13 digit roll number" maxlength="13">
       </div>
       <div style="margin-bottom:16px;">
-        <label class="stat-label">Password</label>
+        <label class="stat-label" for="signupPass">Password</label>
         <input type="password" id="signupPass" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;" placeholder="Min 8 characters">
       </div>
       <div style="margin-bottom:28px;">
-        <label class="stat-label">Confirm Password</label>
+        <label class="stat-label" for="signupPassConfirm">Confirm Password</label>
         <input type="password" id="signupPassConfirm" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;">
       </div>
       <button class="tab-btn active" style="width:100%; justify-content:center; padding:14px; font-size: 14px; border:none;" id="btnSignup">Sign Up securely</button>
@@ -117,7 +117,7 @@
 
     <!-- FORMULA CARD -->
     <div class="formula-card" id="formulaCard">
-      <button class="formula-header" id="formulaToggle" aria-expanded="true" aria-controls="formulaBody" type="button" tabindex="-1">
+      <button class="formula-header" id="formulaToggle" aria-expanded="true" aria-controls="formulaBody" type="button">
         <span class="formula-icon">∑</span>
         <span class="formula-header-text">
           <span class="formula-header-title">Eligibility Formula</span>
