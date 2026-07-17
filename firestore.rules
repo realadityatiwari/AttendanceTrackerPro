@@ -51,6 +51,32 @@ service cloud.firestore {
         && (!('attendance' in docData) || isValidAttendance(docData.attendance));
     }
 
+    function isValidPlatform(platform) {
+      return platform is map
+        && platform.keys().hasOnly(['browser', 'os', 'mobile'])
+        && platform.browser is string
+        && platform.os is string
+        && platform.mobile is bool;
+    }
+
+    function isValidFeedback(feedback) {
+      return feedback.keys().hasOnly(['uid', 'name', 'rollNumber', 'category', 'message', 'version', 'platform', 'screen', 'createdAt', 'status'])
+        && feedback.uid is string
+        && feedback.uid == request.auth.uid
+        && feedback.name is string
+        && feedback.rollNumber is string
+        && feedback.category is string
+        && feedback.category in ['Report a Bug', 'Suggest a Feature', 'General Feedback']
+        && feedback.message is string
+        && feedback.message.size() > 0
+        && feedback.message.size() <= 1000
+        && feedback.version is string
+        && isValidPlatform(feedback.platform)
+        && feedback.screen is string
+        && feedback.createdAt is string
+        && feedback.status == 'open';
+    }
+
     // ====================================================
     // COLLECTION RULES
     // ====================================================
@@ -60,6 +86,12 @@ service cloud.firestore {
     match /students/{userId} {
       allow read: if isOwner(userId);
       allow write: if isOwner(userId) && isValidStudentDoc(request.resource.data);
+    }
+    
+    // Feedback can only be created by authenticated users
+    match /feedback/{docId} {
+      allow create: if request.auth != null && isValidFeedback(request.resource.data);
+      allow read, update, delete: if false;
     }
     
     // Deny everything else by default

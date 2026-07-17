@@ -1,3 +1,5 @@
+export const APP_VERSION = '2.0.0';
+
 let timetable = null;
 
 export async function initTimetable() {

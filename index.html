@@ -2,9 +2,14 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-<title>Attendance Dashboard · CSE-51 · V Sem 2026-27</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1e1e1e">
+  <title>Attendance Dashboard · CSE-51 · V Sem 2026-27</title>
+  
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="assets/icons/icon-192.png" type="image/png">
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/styles.css">
@@ -16,7 +21,12 @@
 <!-- Firebase Firestore -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 </head>
-<body>
+<body class="view-dashboard">
+
+<!-- OFFLINE BANNER -->
+<div id="offlineBanner" class="offline-banner" style="display:none; background:var(--red-dim); color:var(--red); text-align:center; padding:8px; font-size:12px; position:fixed; top:0; width:100%; z-index:10000;">
+  You are offline. Attendance syncing is paused.
+</div>
 
 <!-- AUTH CONTAINER -->
 <div id="authContainer" class="shell" style="max-width: 440px; padding-top: 10vh;">
@@ -229,6 +239,31 @@
         <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
         <span>Sign Out</span>
       </button>
+      <button class="profile-action-btn" id="profileInstallAppBtn" style="display:none; color: var(--accent);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <span>Install App</span>
+      </button>
+    </div>
+    
+    <!-- FEEDBACK FORM -->
+    <div class="stat-card" style="margin-top: 24px; padding: 24px;">
+      <h3 style="font-size: 16px; margin-bottom: 16px; color: var(--text);">Send Feedback</h3>
+      <form id="feedbackForm" onsubmit="return false;">
+        <div style="margin-bottom:16px;">
+          <label class="stat-label" for="feedbackCategory">Category</label>
+          <select id="feedbackCategory" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px;" required>
+            <option value="Report a Bug">Report a Bug</option>
+            <option value="Suggest a Feature">Suggest a Feature</option>
+            <option value="General Feedback">General Feedback</option>
+          </select>
+        </div>
+        <div style="margin-bottom:16px; position:relative;">
+          <label class="stat-label" for="feedbackMessage">Message</label>
+          <textarea id="feedbackMessage" style="width:100%; padding:12px 14px; margin-top:6px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:inherit; font-size:14px; min-height: 100px; resize: vertical;" placeholder="How can we improve AttendanceDash Pro?" maxlength="1000" required></textarea>
+          <div id="feedbackCharCount" style="font-size: 11px; color: var(--text2); text-align: right; margin-top: 4px;">0 / 1000</div>
+        </div>
+        <button type="submit" class="tab-btn active" style="width:100%; justify-content:center; padding:12px; border:none;" id="btnFeedbackSubmit">Send Feedback</button>
+      </form>
     </div>
   </div>
 
@@ -291,6 +326,9 @@
     <!-- Populated by JS -->
   </div>
 </div>
+
+<!-- TOAST CONTAINER -->
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
 <!-- Application Entry Point -->
 <script type="module" src="js/app.js"></script>

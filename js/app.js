@@ -6,6 +6,8 @@ import { selectDate } from './dateContext.js';
 import { loginUser, signupUser, logoutUser } from './auth.js';
 import { validateSignupForm, validateRollNumber, validatePassword } from './validation.js';
 import * as UI from './ui.js';
+import { initFeedbackSystem } from './feedback.js';
+import { initPWA } from './pwa.js';
 
 console.log("[app.js] Module loaded");
 
@@ -376,6 +378,9 @@ function initDOMBindings() {
     }
   });
   bindClick('profileLogoutBtn', handleAppLogout);
+
+  initFeedbackSystem();
+  initPWA();
 
   document.addEventListener('click', (e) => {
     const target = e.target.closest('[data-action]');
