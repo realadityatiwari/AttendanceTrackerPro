@@ -1,7 +1,7 @@
 import { initTimetable } from './utils.js';
 import { auth } from './firebase.js';
 import { AppState, fetchCloudStates, getLocalAttendance, clearLocalAttendance } from './storage.js';
-import { recalculateAndRender, updateThemeBtn, renderDateNavigator } from './ui.js';
+import { recalculateAndRender, updateThemeBtn, renderDateNavigator, renderBottomSheetDateNav } from './ui.js';
 import { selectDate } from './dateContext.js';
 import { loginUser, signupUser, logoutUser } from './auth.js';
 import { validateSignupForm, validateRollNumber, validatePassword } from './validation.js';
@@ -126,8 +126,21 @@ function checkMigration() {
 
 function updateProfileUI() {
   console.log("[app.js] updateProfileUI called");
-  document.getElementById('profileName').textContent = AppState.profile.name || "Student";
-  document.getElementById('profileRoll').textContent = AppState.profile.rollNumber || "Roll No";
+  const name = AppState.profile.name || "Student";
+  const roll = AppState.profile.rollNumber || "Roll No";
+  document.getElementById('profileName').textContent = name;
+  document.getElementById('profileRoll').textContent = roll;
+  // Sync profile view
+  const pvName = document.getElementById('profileViewName');
+  const pvRoll = document.getElementById('profileViewRoll');
+  const pvInit = document.getElementById('profileInitial');
+  if (pvName) pvName.textContent = name;
+  if (pvRoll) pvRoll.textContent = roll;
+  if (pvInit) pvInit.textContent = name[0].toUpperCase();
+  // Sync profile theme label
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const label = document.getElementById('profileThemeLabel');
+  if (label) label.textContent = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
 }
 
 async function bootstrap() {
@@ -166,6 +179,16 @@ async function bootstrap() {
         console.error("[app.js] renderDateNavigator failed:", e.message, e.stack);
       }
       try {
+        // Set initial view state
+        document.body.classList.add('view-dashboard');
+        document.querySelectorAll('.view-section').forEach(section => {
+          section.style.display = section.id === 'dashboardView' ? 'block' : 'none';
+        });
+        console.log("[app.js] Initial view set to dashboard");
+      } catch (e) {
+        console.error("[app.js] Initial view setup failed:", e);
+      }
+      try {
         console.log("[app.js] calling recalculateAndRender");
         recalculateAndRender();
         console.log("[app.js] recalculateAndRender done");
@@ -184,6 +207,73 @@ async function bootstrap() {
   });
 }
 
+/* ─── View Switching (Mobile Bottom Nav) ───────────────────────────── */
+let currentView = 'dashboard';
+
+function switchView(viewName) {
+  if (viewName === currentView) return;
+  currentView = viewName;
+
+  // Update body class for CSS targeting
+  document.body.classList.remove('view-dashboard', 'view-subjects', 'view-history', 'view-profile');
+  document.body.classList.add(`view-${viewName}`);
+
+  // Update nav tabs
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    const isActive = tab.getAttribute('data-view') === viewName;
+    tab.classList.toggle('active', isActive);
+    tab.setAttribute('aria-selected', String(isActive));
+  });
+
+  // Update view sections
+  document.querySelectorAll('.view-section').forEach(section => {
+    section.style.display = section.id === `${viewName}View` ? 'block' : 'none';
+  });
+
+  // Scroll to top on view change
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  console.log(`[app.js] Switched to view: ${viewName}`);
+}
+
+/* ─── Bottom Sheet Open/Close ─────────────────────────────────────── */
+function openBottomSheet() {
+  const sheet = document.getElementById('bottomSheetDateNav');
+  const overlay = document.getElementById('bottomSheetOverlay');
+  if (sheet) {
+    renderBottomSheetDateNav();
+    sheet.style.display = 'block';
+  }
+  if (overlay) overlay.style.display = 'block';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeBottomSheet() {
+  const sheet = document.getElementById('bottomSheetDateNav');
+  const overlay = document.getElementById('bottomSheetOverlay');
+  if (sheet) sheet.style.display = 'none';
+  if (overlay) overlay.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+/* ─── FAB Click ───────────────────────────────────────────────────── */
+function handleFabClick() {
+  switchView('dashboard');
+  // Scroll to today's classes
+  const el = document.getElementById('todayClassesCard');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ─── Profile Theme Toggle ────────────────────────────────────────── */
+function toggleProfileTheme() {
+  const html = document.documentElement;
+  const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', theme);
+  UI.updateThemeBtn(theme);
+  const label = document.getElementById('profileThemeLabel');
+  if (label) label.textContent = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
+}
+
 function initDOMBindings() {
   console.log("[app.js] initDOMBindings called");
   const bindClick = (id, fn) => {
@@ -195,7 +285,7 @@ function initDOMBindings() {
       console.error(`[app.js] Failed to bind click: element #${id} not found`);
     }
   };
-  
+
   bindClick('btnLogin', handleAppLogin);
   bindClick('btnSignup', handleAppSignup);
   bindClick('linkToSignup', toggleAuthView);
@@ -203,13 +293,16 @@ function initDOMBindings() {
   bindClick('btnMigrationDiscard', handleMigrationDiscard);
   bindClick('btnMigrationImport', handleMigrationImport);
   bindClick('btnLogout', handleAppLogout);
-  
+
   bindClick('themeToggle', () => {
     console.log("[app.js] themeToggle clicked");
     const html = document.documentElement;
     const theme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     html.setAttribute('data-theme', theme);
     UI.updateThemeBtn(theme);
+    // Sync profile theme label
+    const label = document.getElementById('profileThemeLabel');
+    if (label) label.textContent = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
   });
 
   bindClick('resetBtn', () => {
@@ -233,10 +326,49 @@ function initDOMBindings() {
     document.getElementById('historyToggle').setAttribute('aria-expanded', String(!isOpen));
   });
 
+  // ─── Bottom Nav ────────────────────────────────────────────────
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const view = tab.getAttribute('data-view');
+      if (view) switchView(view);
+    });
+  });
+
+  // ─── Mobile Date Trigger → Bottom Sheet ────────────────────────
+  bindClick('mobileDateTrigger', openBottomSheet);
+
+  // ─── Bottom Sheet Close ─────────────────────────────────────────
+  bindClick('bottomSheetClose', closeBottomSheet);
+  bindClick('bottomSheetOverlay', closeBottomSheet);
+
+  // Close bottom sheet on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const sheet = document.getElementById('bottomSheetDateNav');
+      if (sheet && sheet.style.display !== 'none') closeBottomSheet();
+    }
+  });
+
+  // ─── FAB ────────────────────────────────────────────────────────
+  bindClick('fabMarkAttendance', handleFabClick);
+
+  // ─── Profile Actions ────────────────────────────────────────────
+  bindClick('profileThemeToggle', toggleProfileTheme);
+  bindClick('profileResetBtn', () => {
+    console.log("[app.js] profileResetBtn clicked");
+    if (confirm('Reset all attendance tracking data? This cannot be undone.')) {
+      import('./storage.js').then(({ clearStates }) => {
+        clearStates();
+        UI.recalculateAndRender();
+      }).catch(e => console.error(e));
+    }
+  });
+  bindClick('profileLogoutBtn', handleAppLogout);
+
   document.addEventListener('click', (e) => {
     const target = e.target.closest('[data-action]');
     if (!target) return;
-    
+
     const action = target.getAttribute('data-action');
     console.log("[app.js] Global click delegate fired for action:", action);
     if (action === 'switchQuiz') {
@@ -252,7 +384,7 @@ function initDOMBindings() {
   });
   console.log("[app.js] Global event delegation set up");
 
-  // Keyboard navigation for quiz tabs (delegated to document since tabs-wrap may not exist yet)
+  // Keyboard navigation for quiz tabs
   document.addEventListener('keydown', (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     const tabsWrap = document.querySelector('.tabs-wrap');

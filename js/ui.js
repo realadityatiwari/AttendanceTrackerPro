@@ -1,4 +1,4 @@
-import { loadStates, clearStates } from './storage.js';
+import { loadStates, clearStates, AppState } from './storage.js';
 import { getTimetable, formatTodayHeader, getLocalDateString, getTodayString, isScheduledClass, formatHistoryDate } from './utils.js';
 import { computeSubjectStats, calcForecastImpact, getAttendanceData, getSubjectStatus, pctColor, barColor, dimColor } from './attendance-engine.js';
 import {
@@ -47,6 +47,9 @@ export function updateViewingLabel() {
   dateEl.textContent = `${dName} • ${dStr}`;
   const navTrigger = document.getElementById('navTriggerLabel');
   if (navTrigger) navTrigger.textContent = formatTodayHeader(d);
+  // Update mobile date label
+  const mobileLabel = document.getElementById('mobileDateLabel');
+  if (mobileLabel) mobileLabel.textContent = formatTodayHeader(d);
 }
 
 /**
@@ -241,8 +244,8 @@ export function makeSkipBudgetVisual(remaining, missed, type) {
   `;
 }
 
-export function makePctCell(pct, isAvg = false) {
-  if (pct === null) return `<td class="pct-cell"><span class="badge-na">—</span></td>`;
+export function makePctCell(pct, isAvg = false, label = '') {
+  if (pct === null) return `<td class="pct-cell"${label ? ` data-label="${label}"` : ''}><span class="badge-na">—</span></td>`;
   // Clamp display value to [0, 100] for safety
   const display = Math.min(100, Math.max(0, pct));
   const w   = display.toFixed(1);
@@ -254,12 +257,12 @@ export function makePctCell(pct, isAvg = false) {
   `;
   if (isAvg) {
     const dimCol = dimColor(pct);
-    return `<td class="pct-cell"><div class="avg-cell" style="background:${dimCol};border-radius:8px;padding:6px 10px;display:inline-block;min-width:66px">
+    return `<td class="pct-cell"${label ? ` data-label="${label}"` : ''}><div class="avg-cell" style="background:${dimCol};border-radius:8px;padding:6px 10px;display:inline-block;min-width:66px">
       <span class="pct-val" style="color:${col}">${fmtPct(display)}%</span>
       <div class="pct-bar-wrap"><div class="pct-bar" style="width:${w}%;background:${col}"></div></div>
     </div></td>`;
   }
-  return `<td class="pct-cell">${inner}</td>`;
+  return `<td class="pct-cell"${label ? ` data-label="${label}"` : ''}>${inner}</td>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -310,6 +313,146 @@ export function buildHeroCard(rows, label, quizDate) {
           <div class="hero-item-label">Total Classes</div>
           <div class="hero-item-val">${totalClasses}</div>
           <div class="hero-item-sub">across ${totalSubj} subjects</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Build one accordion-style subject card for mobile. */
+export function buildMobileSubjectCard(r) {
+  const avgColor = r.currentAvgPct !== null ? pctColor(r.currentAvgPct) : 'var(--text3)';
+  const avgDisplay = r.currentAvgPct !== null ? r.currentAvgPct.toFixed(1) + '%' : '—';
+
+  const lecRow = r.completedL > 0
+    ? `<div class="mobile-subj-stat">
+        <div class="mobile-subj-stat-header"><span>Lecture</span><span>${r.currentLecPct.toFixed(2)}%</span></div>
+        <div class="mobile-subj-progress"><div class="mobile-subj-progress-bar" style="width:${Math.min(100, Math.max(0, r.currentLecPct)).toFixed(1)}%;background-color:${barColor(r.currentLecPct)}"></div></div>
+      </div>`
+    : '';
+
+  const tutRow = r.totT > 0
+    ? (r.completedT > 0
+      ? `<div class="mobile-subj-stat">
+          <div class="mobile-subj-stat-header"><span>Tutorial</span><span>${r.currentTutPct.toFixed(2)}%</span></div>
+          <div class="mobile-subj-progress"><div class="mobile-subj-progress-bar" style="width:${Math.min(100, Math.max(0, r.currentTutPct)).toFixed(1)}%;background-color:${barColor(r.currentTutPct)}"></div></div>
+        </div>`
+      : `<div class="mobile-subj-stat"><div class="mobile-subj-stat-header"><span>Tutorial</span><span>—</span></div></div>`)
+    : '';
+
+  const avgRow = r.currentAvgPct !== null
+    ? `<div class="mobile-subj-stat">
+        <div class="mobile-subj-stat-header"><span>Average</span><span style="color:${avgColor}">${r.currentAvgPct.toFixed(2)}%</span></div>
+        <div class="mobile-subj-progress"><div class="mobile-subj-progress-bar" style="width:${Math.min(100, Math.max(0, r.currentAvgPct)).toFixed(1)}%;background-color:${barColor(r.currentAvgPct)}"></div></div>
+      </div>`
+    : '';
+
+  const forecastRow = r.forecastAvgPct !== null
+    ? `<div class="mobile-subj-stat">
+        <div class="mobile-subj-stat-header"><span>Forecast</span><span style="color:${pctColor(r.forecastAvgPct)}">${r.forecastAvgPct.toFixed(1)}%</span></div>
+        <div class="mobile-subj-progress"><div class="mobile-subj-progress-bar" style="width:${Math.min(100, Math.max(0, r.forecastAvgPct)).toFixed(1)}%;background-color:${barColor(r.forecastAvgPct)}"></div></div>
+      </div>`
+    : '';
+
+  const opt = r.optResult;
+  const mustAttend = opt.addL + opt.addT;
+  const safeSkips = opt.skipL_budget + opt.skipT_budget;
+  const needText = getRemainingRequirementText(opt);
+  const needClass = opt.infeasible ? 'danger' : (opt.addL === 0 && opt.addT === 0 ? 'safe' : 'warning');
+
+  const totalCls = ` ${r.totL + r.totT}`;
+  const attendedCls = ` ${r.attL_done + r.attT_done}`;
+
+  return `
+    <div class="mobile-subj-card" data-subj-code="${r.code}">
+      <button class="mobile-subj-header" aria-expanded="false" aria-controls="msubj-${r.code}">
+        <div class="mobile-subj-left">
+          <div class="mobile-subj-code">${r.code}</div>
+          <div class="mobile-subj-name">${r.name}</div>
+          <div class="mobile-subj-avg-row">
+            <span class="mobile-subj-avg-val" style="color:${avgColor}">${avgDisplay}</span>
+            <span class="mobile-subj-avg-label">Average</span>
+          </div>
+        </div>
+        <div class="mobile-subj-right">
+          <span class="status-badge ${r.status.cls}">${r.status.text}</span>
+          <svg class="mobile-subj-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+        </div>
+      </button>
+      <div class="mobile-subj-body" id="msubj-${r.code}" hidden>
+        <div class="mobile-subj-body-inner">
+          <div class="mobile-subj-stats">
+            <div class="mobile-subj-stat-section">
+              <div class="subj-stat-section-label">Current</div>
+              ${lecRow}${tutRow}${avgRow}
+            </div>
+            <div class="subj-stat-section" style="margin-top:8px;">
+              <div class="subj-stat-section-label">Forecast (if all pending attended)</div>
+              ${forecastRow}
+            </div>
+            <div class="mobile-subj-need ${needClass}">${needText.replace(/^<div class="subj-need-text[^"]*">/, '').replace(/<\/div>$/, '')}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+              <div class="mobile-subj-stat">
+                <div class="mobile-subj-stat-header"><span>Must Attend</span><span style="color:var(--accent)">${mustAttend}</span></div>
+              </div>
+              <div class="mobile-subj-stat">
+                <div class="mobile-subj-stat-header"><span>Safe Skips</span><span style="color:var(--green)">${safeSkips}</span></div>
+              </div>
+              <div class="mobile-subj-stat">
+                <div class="mobile-subj-stat-header"><span>Total Classes</span><span>${totalCls}</span></div>
+              </div>
+              <div class="mobile-subj-stat">
+                <div class="mobile-subj-stat-header"><span>Attended</span><span>${attendedCls}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Build one stacked attendance card for mobile (replaces table rows). */
+export function buildMobileAttendanceCard(r) {
+  const avgCol = r.currentAvgPct !== null ? pctColor(r.currentAvgPct) : 'var(--text3)';
+  const opt = r.optResult;
+  const mustAttend = opt.addL + opt.addT;
+  const safeSkips = opt.skipL_budget + opt.skipT_budget;
+
+  const lecVal = r.currentLecPct !== null ? r.currentLecPct.toFixed(2) + '%' : '—';
+  const tutVal = r.currentTutPct !== null ? r.currentTutPct.toFixed(2) + '%' : (r.totT > 0 ? '—' : 'N/A');
+  const avgVal = r.currentAvgPct !== null ? r.currentAvgPct.toFixed(2) + '%' : '—';
+  const fcastVal = r.forecastAvgPct !== null ? r.forecastAvgPct.toFixed(1) + '%' : '—';
+  const fcastCol = r.forecastAvgPct !== null ? pctColor(r.forecastAvgPct) : 'var(--text3)';
+
+  return `
+    <div class="mobile-att-card">
+      <div class="mobile-att-card-header">
+        <div class="mobile-att-card-code">${r.code}</div>
+        <div class="mobile-att-card-name">${r.name}</div>
+      </div>
+      <div class="mobile-att-card-grid">
+        <div class="mobile-att-item">
+          <span class="mobile-att-label">Lecture %</span>
+          <span class="mobile-att-value ${r.currentLecPct !== null ? (r.currentLecPct >= 75 ? 'green' : 'amber') : 'muted'}">${lecVal}</span>
+        </div>
+        <div class="mobile-att-item">
+          <span class="mobile-att-label">Tutorial %</span>
+          <span class="mobile-att-value ${r.currentTutPct !== null ? (r.currentTutPct >= 75 ? 'green' : 'amber') : 'muted'}">${tutVal}</span>
+        </div>
+        <div class="mobile-att-item">
+          <span class="mobile-att-label">Average %</span>
+          <span class="mobile-att-value" style="color:${avgCol}">${avgVal}</span>
+        </div>
+        <div class="mobile-att-item">
+          <span class="mobile-att-label">Must Attend</span>
+          <span class="mobile-att-value accent">${mustAttend}</span>
+        </div>
+        <div class="mobile-att-item">
+          <span class="mobile-att-label">Safe Skips</span>
+          <span class="mobile-att-value green">${safeSkips}</span>
+        </div>
+        <div class="mobile-att-item">
+          <span class="mobile-att-label">Forecast</span>
+          <span class="mobile-att-value" style="color:${fcastCol}">${fcastVal}</span>
         </div>
       </div>
     </div>`;
@@ -397,52 +540,75 @@ export function buildStatsRow(rows) {
 export function buildTableRow(r) {
   const opt      = r.optResult;
   const tutBadge = r.totT === 0
-    ? `<td><span class="badge-na">N/A</span></td>`
-    : `<td><span class="badge badge-must">${opt.addT}</span></td>`;
+    ? `<td data-label="Must T"><span class="badge-na">N/A</span></td>`
+    : `<td data-label="Must T"><span class="badge badge-must">${opt.addT}</span></td>`;
   const tutSkip  = r.totT === 0
-    ? `<td><span class="badge-na">—</span></td>`
-    : `<td>${makeSkipBudgetVisual(opt.skipT_budget, r.missT_done, 'T')}</td>`;
+    ? `<td data-label="Skip T"><span class="badge-na">—</span></td>`
+    : `<td data-label="Skip T">${makeSkipBudgetVisual(opt.skipT_budget, r.missT_done, 'T')}</td>`;
   const tagHTML  = r.tag ? `<div><span class="s-elec">${r.tag}</span></div>` : '';
 
-  const currentTutCell  = r.totT > 0 ? makePctCell(r.currentTutPct)  : `<td><span class="badge-na">N/A</span></td>`;
-  const forecastTutCell = r.totT > 0 ? makePctCell(r.forecastTutPct) : `<td><span class="badge-na">N/A</span></td>`;
+  const currentTutCell  = r.totT > 0 ? makePctCell(r.currentTutPct, false, 'Tut %')  : `<td data-label="Tut %"><span class="badge-na">N/A</span></td>`;
+  const forecastTutCell = r.totT > 0 ? makePctCell(r.forecastTutPct, false, 'Tut %') : `<td data-label="Tut %"><span class="badge-na">N/A</span></td>`;
 
   return `<tr>
-    <td class="left">
+    <td class="left" data-label="Subject">
       <div class="s-code">${r.code}</div>
       <div class="s-name">${r.name}</div>
       ${tagHTML}
     </td>
-    <td><span class="num">${r.totL}</span></td>
-    <td>${r.totT > 0 ? `<span class="num">${r.totT}</span>` : `<span class="badge-na">—</span>`}</td>
-    <td><span class="num-combined">${r.totComb}</span></td>
+    <td data-label="Lectures"><span class="num">${r.totL}</span></td>
+    <td data-label="Tutorials">${r.totT > 0 ? `<span class="num">${r.totT}</span>` : `<span class="badge-na">—</span>`}</td>
+    <td data-label="Combined"><span class="num-combined">${r.totComb}</span></td>
     <th class="sep-col"></th>
-    <td><span class="badge badge-must">${opt.addL}</span></td>
+    <td data-label="Must L"><span class="badge badge-must">${opt.addL}</span></td>
     ${tutBadge}
-    <td><span class="num-muted">${opt.addL + opt.addT}</span></td>
+    <td data-label="Min total"><span class="num-muted">${opt.addL + opt.addT}</span></td>
     <th class="sep-col"></th>
-    ${makePctCell(r.currentLecPct)}
+    ${makePctCell(r.currentLecPct, false, 'Lec %')}
     ${currentTutCell}
-    ${makePctCell(r.currentAvgPct, true)}
+    ${makePctCell(r.currentAvgPct, true, 'Avg %')}
     <th class="sep-col"></th>
-    ${makePctCell(r.forecastLecPct)}
+    ${makePctCell(r.forecastLecPct, false, 'Lec %')}
     ${forecastTutCell}
-    ${makePctCell(r.forecastAvgPct, true)}
+    ${makePctCell(r.forecastAvgPct, true, 'Avg %')}
     <th class="sep-col"></th>
-    <td>${makeSkipBudgetVisual(opt.skipL_budget, r.missL_done, 'L')}</td>
+    <td data-label="Skip L">${makeSkipBudgetVisual(opt.skipL_budget, r.missL_done, 'L')}</td>
     ${tutSkip}
-    <td><span class="num-muted">${opt.skipL_budget + opt.skipT_budget}</span></td>
+    <td data-label="Total skip"><span class="num-muted">${opt.skipL_budget + opt.skipT_budget}</span></td>
   </tr>`;
 }
 
 /** Main render orchestrator — assembles all sub-sections. */
-export function renderPanel(quizIdx, liveData = getAttendanceData(getTimetable().quiz_dates[quizIdx].date)) {
+export function renderPanel(quizIdx, liveData = getAttendanceData(getTimetable().quiz_dates[quizIdx].date), isMobile = false) {
   const {label, date: quizDate} = getTimetable().quiz_dates[quizIdx];
 
   // Compute all stats in ONE pass (single source of truth)
   const rows = getTimetable().subjects.map(({code, name, tag}) =>
     computeSubjectStats(code, name, tag, liveData[code])
   );
+
+  if (isMobile) {
+    const mobileCardsHTML = rows.map(r => buildMobileSubjectCard(r)).join('');
+    const mobileAttHTML = rows.map(r => buildMobileAttendanceCard(r)).join('');
+
+    return `
+      <div class="subject-grid mobile-subj-grid">${mobileCardsHTML}</div>
+      <div class="mobile-section-title">Attendance Overview</div>
+      <div class="mobile-att-cards">${mobileAttHTML}</div>
+      <div class="opt-note">
+        <span class="opt-note-icon">⚡</span>
+        <div>
+          <b>Optimisation note:</b> The "Must Attend" values are found by exhaustive search over all valid
+          integer combinations of (attended lectures, attended tutorials), minimising total classes attended
+          while satisfying <b>(Lec% + Tut%) / 2 ≥ 75%</b>. On ties, the combination with the
+          <b>fewest lectures attended</b> (maximum lecture skips) is chosen — this is why subjects with
+          tutorials show 50% lecture attendance paired with 100% tutorial attendance as the optimal minimum.
+          <br><br>
+          <b>Forecast %</b> assumes all remaining (pending) classes are attended. <b>Current %</b> is based only on
+          completed (attended or missed) classes and excludes all pending classes.
+        </div>
+      </div>`;
+  }
 
   const heroHTML  = buildHeroCard(rows, label, quizDate);
   const cardsHTML = rows.map(buildSubjectCard).join('');
@@ -681,11 +847,121 @@ export function renderHistoryLog() {
 export function recalculateAndRender() {
   const targetDate  = getActiveDate();
   const liveData    = getAttendanceData(getTimetable().quiz_dates[currentQuiz].date, getEffectiveStates());
+  const isMobile    = window.innerWidth < 768;
+
   renderTodayClasses(targetDate, liveData);
   renderHistoryLog();
+  // Also render into mobile history list
+  const mobileList = document.getElementById('mobileHistoryList');
+  if (mobileList) {
+    const desktopList = document.getElementById('historyList');
+    if (desktopList) {
+      mobileList.innerHTML = desktopList.innerHTML;
+    }
+  }
+
+  // Render panels (mobile version skips hero/stats/table)
+  document.getElementById('panels').innerHTML = renderPanel(currentQuiz, liveData, isMobile);
+
+  if (isMobile) {
+    // Pre-compute rows for hero + stats
+    const {label, date: quizDate} = getTimetable().quiz_dates[currentQuiz];
+    const rows = getTimetable().subjects.map(({code, name, tag}) =>
+      computeSubjectStats(code, name, tag, liveData[code])
+    );
+    const heroHTML  = buildHeroCard(rows, label, quizDate);
+    const statsHTML = buildStatsRow(rows);
+
+    // Insert hero + stats into mobile container (positioned before Today's Classes in HTML)
+    const heroContainer = document.getElementById('mobileHeroContainer');
+    if (heroContainer) {
+      heroContainer.innerHTML = heroHTML + statsHTML;
+    }
+
+    // Setup accordion + formula toggle (only on first run per render)
+    setupMobileAccordion();
+    initFormulaToggle();
+  }
+
   updateModeBadge();
   updateViewingLabel();
-  document.getElementById('panels').innerHTML = renderPanel(currentQuiz, liveData);
+  // Sync profile view
+  const pvName = document.getElementById('profileViewName');
+  const pvRoll = document.getElementById('profileViewRoll');
+  const pvInit = document.getElementById('profileInitial');
+  if (pvName) pvName.textContent = AppState.profile.name || 'Student';
+  if (pvRoll) pvRoll.textContent = AppState.profile.rollNumber || 'Roll No';
+  if (pvInit) pvInit.textContent = (AppState.profile.name || 'S')[0].toUpperCase();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOBILE INTERACTION BINDINGS
+   Formula card toggle · Subject card accordion
+   ═══════════════════════════════════════════════════════════════════════ */
+
+let formulaToggleBound = false;
+
+function initFormulaToggle() {
+  const toggle = document.getElementById('formulaToggle');
+  const card   = document.getElementById('formulaCard');
+  if (!toggle || !card) return;
+
+  // Remove any existing listener to avoid duplicates
+  if (formulaToggleBound) return;
+  formulaToggleBound = true;
+
+  // Start collapsed on mobile
+  card.classList.add('collapsed');
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.querySelector('.formula-header-hint').textContent = 'Tap to Expand';
+
+  toggle.addEventListener('click', () => {
+    const isCollapsed = card.classList.toggle('collapsed');
+    toggle.setAttribute('aria-expanded', String(!isCollapsed));
+    toggle.querySelector('.formula-header-hint').textContent =
+      isCollapsed ? 'Tap to Expand' : 'Tap to collapse';
+  });
+}
+
+let accordionBound = false;
+
+function setupMobileAccordion() {
+  if (!accordionBound) {
+    accordionBound = true;
+    document.addEventListener('click', (e) => {
+      const header = e.target.closest('.mobile-subj-header');
+      if (!header) return;
+
+      const card = header.closest('.mobile-subj-card');
+      if (!card) return;
+
+      const body = card.querySelector('.mobile-subj-body');
+      if (!body) return;
+
+      const isExpanded = card.classList.contains('expanded');
+
+      // Close all other cards
+      document.querySelectorAll('.mobile-subj-card.expanded').forEach(c => {
+        if (c !== card) {
+          c.classList.remove('expanded');
+          c.querySelector('.mobile-subj-header').setAttribute('aria-expanded', 'false');
+          const b = c.querySelector('.mobile-subj-body');
+          if (b) b.hidden = true;
+        }
+      });
+
+      // Toggle current
+      if (isExpanded) {
+        card.classList.remove('expanded');
+        header.setAttribute('aria-expanded', 'false');
+        body.hidden = true;
+      } else {
+        card.classList.add('expanded');
+        header.setAttribute('aria-expanded', 'true');
+        body.hidden = false;
+      }
+    });
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -719,6 +995,66 @@ export function updateThemeBtn(theme) {
     iconPath.setAttribute('d', SUN_PATH);
     label.textContent = 'Light';
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BOTTOM SHEET DATE NAVIGATOR (for mobile)
+   Renders the same date options as the dropdown into a bottom sheet.
+═══════════════════════════════════════════════════════════════════════ */
+
+export function renderBottomSheetDateNav() {
+  const body = document.getElementById('bottomSheetBody');
+  if (!body) return;
+
+  const opts = buildNavigatorOptions();
+
+  body.innerHTML = `
+    ${opts.map(o => `
+      <button class="sheet-nav-item ${o.active ? 'active' : ''}" data-nav="${o.action}" ${o.dateStr ? `data-date="${o.dateStr}"` : ''}>
+        <span class="nav-item-ico" aria-hidden="true">${o.icon}</span>
+        <span class="nav-item-label">${o.label}</span>
+        <span class="nav-item-mode ${o.modeClass}">${o.modeText}</span>
+      </button>`).join('')}
+    <div class="nav-sep"></div>
+    <div class="sheet-picker">
+      <label class="sheet-picker-label" for="sheetDatePicker">Pick Date…</label>
+      <input type="date" id="sheetDatePicker" class="sheet-picker-input"
+             min="${getLocalDateString(getTimetable().start_date)}"
+             value="${getActiveDateString()}"
+             aria-label="Pick a date" />
+    </div>`;
+
+  // Reuse existing navigator event handlers
+  body.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-nav]');
+    if (!item) return;
+    const action = item.getAttribute('data-nav');
+    const dateStr = item.getAttribute('data-date');
+    if (action === 'yesterday' || action === 'today' || action === 'tomorrow') {
+      selectDateByString(dateStr);
+      closeBottomSheet();
+      afterDateChange();
+    }
+  });
+
+  const picker = document.getElementById('sheetDatePicker');
+  if (picker) {
+    picker.addEventListener('change', () => {
+      if (picker.value) {
+        selectDateByString(picker.value);
+        closeBottomSheet();
+        afterDateChange();
+      }
+    });
+  }
+}
+
+function closeBottomSheet() {
+  const sheet = document.getElementById('bottomSheetDateNav');
+  const overlay = document.getElementById('bottomSheetOverlay');
+  if (sheet) sheet.style.display = 'none';
+  if (overlay) overlay.style.display = 'none';
+  document.body.style.overflow = '';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
